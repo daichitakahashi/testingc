@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,17 +22,56 @@ const (
 
 type C struct {
 	testing.TB
-	status    int32
+
+	testingM *testing.M
+	status   int32
+
 	m         sync.Mutex
 	cleanup   []func()
 	tmpDir    string
 	tmpDirSeq int32
 }
 
+func M(m *testing.M, fn func(c *C) int) int {
+	c := &C{
+		testingM: m,
+	}
+	done := make(chan int)
+
+	go func() {
+		var s int
+		defer func() {
+			// cleanup
+			c.teardown()
+
+			// handle failed/skipped
+			v := atomic.LoadInt32(&c.status)
+			switch v {
+			case failed:
+				s = 1
+			case skipped:
+				s = 0
+			default:
+				s = int(v)
+			}
+			done <- s
+		}()
+		s = fn(c)
+	}()
+	return <-done
+}
+
 func (c *C) Cleanup(f func()) {
 	c.m.Lock()
 	defer c.m.Unlock()
 	c.cleanup = append(c.cleanup, f)
+}
+
+func (c *C) teardown() {
+	last := len(c.cleanup) - 1
+	for i := range c.cleanup {
+		c.cleanup[last-i]()
+	}
 }
 
 func (c *C) Error(args ...any) {
@@ -50,7 +90,7 @@ func (c *C) Fail() {
 
 func (c *C) FailNow() {
 	c.Fail()
-	panic("failed")
+	runtime.Goexit()
 }
 
 func (c *C) Failed() bool {
@@ -98,7 +138,7 @@ func (c *C) Skip(args ...any) {
 
 func (c *C) SkipNow() {
 	atomic.CompareAndSwapInt32(&c.status, 0, skipped)
-	panic("skipped")
+	runtime.Goexit()
 }
 
 func (c *C) Skipf(format string, args ...any) {
@@ -164,4 +204,8 @@ func removeAll(path string) error {
 			}
 		}
 	}
+}
+
+func (c *C) Run() int {
+	return c.testingM.Run()
 }
