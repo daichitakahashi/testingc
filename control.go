@@ -41,20 +41,24 @@ func M(m *testing.M, fn func(c *C) int) int {
 	go func() {
 		var s int
 		defer func() {
+			defer func() {
+				// handle failed/skipped
+				// for the case that tests have failed/skipped in cleanup functions,
+				// we use "defer" in "defer"
+				v := atomic.LoadInt32(&c.status)
+				switch v {
+				case failed:
+					s = 1
+				case skipped:
+					s = 0
+				default:
+					s = int(v)
+				}
+				done <- s
+			}()
+
 			// cleanup
 			c.teardown()
-
-			// handle failed/skipped
-			v := atomic.LoadInt32(&c.status)
-			switch v {
-			case failed:
-				s = 1
-			case skipped:
-				s = 0
-			default:
-				s = int(v)
-			}
-			done <- s
 		}()
 		s = fn(c)
 	}()
