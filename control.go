@@ -126,13 +126,22 @@ func (*C) Name() string {
 }
 
 func (c *C) Setenv(key, value string) {
+	prev, ok := os.LookupEnv(key)
+
 	err := os.Setenv(key, value)
 	if err != nil {
 		c.Fatal(err)
 	}
-	c.Cleanup(func() {
-		_ = os.Unsetenv(key)
-	})
+
+	if ok {
+		c.Cleanup(func() {
+			_ = os.Setenv(key, prev)
+		})
+	} else {
+		c.Cleanup(func() {
+			_ = os.Unsetenv(key)
+		})
+	}
 }
 
 func (c *C) Skip(args ...any) {
