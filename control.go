@@ -9,65 +9,29 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
 
 // status
 const (
-	failed  = 1
-	skipped = 2
+	failed = 1 << iota
+	skipped
 )
 
 type C struct {
 	testing.TB
-
-	testingM *testing.M
-	status   int32
-
-	m         sync.Mutex
+	smu       sync.Mutex
+	status    int8
+	cmu       sync.Mutex
 	cleanup   []func()
 	tmpDir    string
 	tmpDirSeq int32
 }
 
-func M(m *testing.M, fn func(c *C) int) int {
-	c := &C{
-		testingM: m,
-	}
-	done := make(chan int)
-
-	go func() {
-		var s int
-		defer func() {
-			defer func() {
-				// handle failed/skipped
-				// for the case that tests have failed/skipped in cleanup functions,
-				// we use "defer" in "defer"
-				v := atomic.LoadInt32(&c.status)
-				switch v {
-				case failed:
-					s = 1
-				case skipped:
-					s = 0
-				default:
-					s = int(v)
-				}
-				done <- s
-			}()
-
-			// cleanup
-			c.teardown()
-		}()
-		s = fn(c)
-	}()
-	return <-done
-}
-
 func (c *C) Cleanup(f func()) {
-	c.m.Lock()
-	defer c.m.Unlock()
+	c.cmu.Lock()
+	defer c.cmu.Unlock()
 	c.cleanup = append(c.cleanup, f)
 }
 
@@ -89,7 +53,9 @@ func (c *C) Errorf(format string, args ...any) {
 }
 
 func (c *C) Fail() {
-	atomic.CompareAndSwapInt32(&c.status, 0, failed)
+	c.smu.Lock()
+	defer c.smu.Unlock()
+	c.status |= failed
 }
 
 func (c *C) FailNow() {
@@ -98,7 +64,9 @@ func (c *C) FailNow() {
 }
 
 func (c *C) Failed() bool {
-	return atomic.LoadInt32(&c.status) == failed
+	c.smu.Lock()
+	defer c.smu.Unlock()
+	return c.status&failed == failed
 }
 
 func (c *C) Fatal(args ...any) {
@@ -150,7 +118,9 @@ func (c *C) Skip(args ...any) {
 }
 
 func (c *C) SkipNow() {
-	atomic.CompareAndSwapInt32(&c.status, 0, skipped)
+	c.smu.Lock()
+	defer c.smu.Unlock()
+	c.status |= skipped
 	runtime.Goexit()
 }
 
@@ -160,12 +130,14 @@ func (c *C) Skipf(format string, args ...any) {
 }
 
 func (c *C) Skipped() bool {
-	return atomic.LoadInt32(&c.status) == skipped
+	c.smu.Lock()
+	defer c.smu.Unlock()
+	return c.status&skipped == skipped
 }
 
 func (c *C) TempDir() string {
-	c.m.Lock()
-	defer c.m.Unlock()
+	c.cmu.Lock()
+	defer c.cmu.Unlock()
 
 	var exists bool
 	if c.tmpDir != "" {
@@ -217,8 +189,4 @@ func removeAll(path string) error {
 			}
 		}
 	}
-}
-
-func (c *C) Run() int {
-	return c.testingM.Run()
 }
