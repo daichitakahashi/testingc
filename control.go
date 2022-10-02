@@ -21,12 +21,13 @@ const (
 
 type C struct {
 	testing.TB
-	smu       sync.Mutex
-	status    int8
-	cmu       sync.Mutex
-	cleanup   []func()
-	tmpDir    string
-	tmpDirSeq int32
+	smu         sync.Mutex
+	status      int8
+	cmu         sync.Mutex
+	cleanup     []func()
+	tmpDir      string
+	tmpDirSeq   int32
+	panicOnFail bool
 }
 
 func (c *C) Cleanup(f func()) {
@@ -60,6 +61,9 @@ func (c *C) Fail() {
 
 func (c *C) FailNow() {
 	c.Fail()
+	if c.panicOnFail {
+		panic("fail")
+	}
 	runtime.Goexit()
 }
 

@@ -13,9 +13,16 @@ func (c *MC) Run() (code int) {
 	return c.m.Run()
 }
 
+func (c *MC) Name() string {
+	return "testingc.MC"
+}
+
 func M(m *testing.M, fn func(c *MC) int) int {
 	c := &MC{
 		m: m,
+		C: C{
+			panicOnFail: true,
+		},
 	}
 	done := make(chan int)
 
