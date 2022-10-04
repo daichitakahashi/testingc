@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,10 +22,13 @@ const (
 
 type C struct {
 	testing.TB
-	smu         sync.Mutex
-	status      int8
-	cmu         sync.Mutex
-	cleanup     []func()
+
+	smu    sync.Mutex
+	status int8
+
+	cmu     sync.Mutex
+	cleanup []func()
+
 	tmpDir      string
 	tmpDirSeq   int32
 	panicOnFail bool
@@ -36,11 +40,39 @@ func (c *C) Cleanup(f func()) {
 	c.cleanup = append(c.cleanup, f)
 }
 
-func (c *C) teardown() {
-	last := len(c.cleanup) - 1
-	for i := range c.cleanup {
-		c.cleanup[last-i]()
+func (c *C) teardown(recoverPanic bool) (recovered any) {
+	defer func() {
+		c.cmu.Lock()
+		remain := len(c.cleanup) > 0
+		c.cmu.Unlock()
+		if remain {
+			r := c.teardown(recoverPanic)
+			if recovered == nil {
+				recovered = r
+			}
+		}
+	}()
+	if recoverPanic {
+		defer func() {
+			recovered = recover()
+		}()
 	}
+
+	// extract and run
+	for {
+		var cleanup func()
+		c.cmu.Lock()
+		if l := len(c.cleanup); l > 0 {
+			cleanup = c.cleanup[l-1]
+			c.cleanup = c.cleanup[:l-1]
+		}
+		c.cmu.Unlock()
+		if cleanup == nil {
+			break
+		}
+		cleanup()
+	}
+	return nil
 }
 
 func (c *C) Error(args ...any) {
@@ -60,9 +92,12 @@ func (c *C) Fail() {
 }
 
 func (c *C) FailNow() {
-	c.Fail()
+	c.smu.Lock()
+	defer c.smu.Unlock()
+	c.status |= failed
+
 	if c.panicOnFail {
-		panic("fail")
+		panic("FAIL")
 	}
 	runtime.Goexit()
 }
@@ -193,4 +228,34 @@ func removeAll(path string) error {
 			}
 		}
 	}
+}
+
+var mu sync.Mutex
+
+func output(s string, skip int) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	buf := new(strings.Builder)
+	buf.WriteString("    ")
+	_, filename, line, ok := runtime.Caller(skip)
+	if ok {
+		_, _ = fmt.Fprintf(buf, "%s:%d: ", filepath.Base(filename), line)
+	} else {
+		buf.WriteString("???: ")
+	}
+
+	l := len(s)
+	if s[l-1] == '\n' {
+		s = s[:l-1]
+	}
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if i > 0 {
+			buf.WriteString("\n    ")
+		}
+		buf.WriteString(line)
+	}
+	buf.WriteByte('\n')
+	fmt.Print(buf.String())
 }
