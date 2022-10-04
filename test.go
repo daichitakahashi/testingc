@@ -8,9 +8,7 @@ import (
 
 type T struct {
 	C
-	failed  string
-	skipped string
-	out     *bytes.Buffer
+	out *bytes.Buffer
 }
 
 func (t *T) Error(args ...any) {
@@ -43,7 +41,7 @@ func (t *T) Logf(format string, args ...any) {
 }
 
 func (t *T) Name() string {
-	return "testingc.T"
+	return "testingc.Test"
 }
 
 func (t *T) Skip(args ...any) {
@@ -82,16 +80,19 @@ func Test(fn func(t *T)) *TestResult {
 	t := &T{
 		out: bytes.NewBuffer(nil),
 	}
-	defer t.teardown()
 
 	done := make(chan struct{})
 	go func() {
 		defer func() {
+			defer close(done)
 			r := recover()
 			if r != nil {
 				t.Error(r)
 			}
-			close(done)
+			recovered := t.teardown(true)
+			if recovered != nil {
+				t.Error(recovered)
+			}
 		}()
 		fn(t)
 	}()
